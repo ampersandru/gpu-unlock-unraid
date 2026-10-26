@@ -27,7 +27,8 @@ if [ ! -r "$PAYLOAD/gpu_unlock.ko" ]; then
     log "Skipped: no module built for $KREL."; exit 0
 fi
 TARGET=$(cat "$BASE/target" 2>/dev/null)
-if ! printf '%s\n' "$TARGET" | grep -Eq '^[[:xdigit:]]{4}:[[:xdigit:]]{2}:[[:xdigit:]]{2}\.[0-7]$'; then
+if [ "$TARGET" != all ] &&
+   ! printf '%s\n' "$TARGET" | grep -Eq '^[[:xdigit:]]{4}:[[:xdigit:]]{2}:[[:xdigit:]]{2}\.[0-7](,[[:xdigit:]]{4}:[[:xdigit:]]{2}:[[:xdigit:]]{2}\.[0-7])*$'; then
     log 'Skipped: invalid PCI target.'; exit 0
 fi
 # Check complete tokens rather than accepting a partial PCI address match.
@@ -37,8 +38,57 @@ for ARG in $(cat /proc/cmdline); do
 done
 [ "$OPT_IN" = yes ] || { log 'Skipped: boot opt-in absent.'; exit 0; }
 [ ! -d /sys/module/gpu_unlock ] || exit 0
-if [ -L "/sys/bus/pci/devices/$TARGET/driver" ]; then
-    log "Skipped: a driver already owns $TARGET."; exit 0
+if [ "$TARGET" = all ]; then
+    # Only check NVIDIA display/3D controllers; ignore audio functions.
+    FOUND=no
+    for DEVICE_PATH in /sys/bus/pci/devices/*; do
+        [ -r "$DEVICE_PATH/vendor" ] || continue
+        [ -r "$DEVICE_PATH/class" ] || continue
+        [ "$(cat "$DEVICE_PATH/vendor")" = 0x10de ] || continue
+
+        CLASS=$(cat "$DEVICE_PATH/class")
+        case "$CLASS" in
+            0x03*) ;;
+            *) continue ;;
+        esac
+
+        FOUND=yes
+        if [ -L "$DEVICE_PATH/driver" ]; then
+            log "Skipped: a driver already owns ${DEVICE_PATH##*/}."
+            exit 0
+        fi
+    done
+    [ "$FOUND" = yes ] || {
+        log 'Skipped: no NVIDIA display controllers found.'
+        exit 0
+    }
+else
+    OLD_IFS=$IFS
+    IFS=,
+    for DEVICE in $TARGET; do
+        DEVICE_PATH="/sys/bus/pci/devices/$DEVICE"
+        if [ ! -d "$DEVICE_PATH" ]; then
+            log "Skipped: PCI device $DEVICE is missing."; exit 0
+        fi
+        if [ ! -r "$DEVICE_PATH/vendor" ] ||
+           [ ! -r "$DEVICE_PATH/class" ] ||
+           [ "$(cat "$DEVICE_PATH/vendor")" != 0x10de ]; then
+            log "Skipped: $DEVICE is not an NVIDIA display controller."
+            exit 0
+        fi
+        CLASS=$(cat "$DEVICE_PATH/class")
+        case "$CLASS" in
+            0x03*) ;;
+            *)
+                log "Skipped: $DEVICE is not an NVIDIA display controller."
+                exit 0
+                ;;
+        esac
+        if [ -L "$DEVICE_PATH/driver" ]; then
+            log "Skipped: a driver already owns $DEVICE."; exit 0
+        fi
+    done
+    IFS=$OLD_IFS
 fi
 if ! (cd "$PAYLOAD" && sha256sum -c SHA256SUMS >/dev/null); then
     log 'Skipped: payload checksum verification failed.'; exit 0

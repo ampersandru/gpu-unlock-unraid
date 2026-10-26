@@ -2,15 +2,30 @@
 # SPDX-License-Identifier: GPL-2.0-only
 # Stage persistent files only. Never load the module in this running session.
 set -euo pipefail
-[[ $EUID -eq 0 && $# -eq 2 ]] || { echo "Usage (as root): bash $0 /absolute/payload-directory 0000:01:00.0" >&2; exit 1; }
+[[ $EUID -eq 0 && $# -eq 2 ]] || { echo "Usage (as root): bash $0 /absolute/payload-directory 0000:01:00.0|all|PCI,PCI" >&2; exit 1; }
 PAYLOAD=$(cd -- "$1" && pwd)
 TARGET=${2,,}
 KREL=$(uname -r)
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 BASE=/boot/config/gpu-unlock-unraid
 CONF=/boot/config/modprobe.d/gpu-unlock-unraid.conf
-[[ "$TARGET" =~ ^[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]$ ]]
-test "$(cat "/sys/bus/pci/devices/$TARGET/vendor")" = 0x10de
+if [[ "$TARGET" != all ]]; then
+    [[ "$TARGET" =~ ^[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7](,[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7])*$ ]]
+    IFS=, read -ra DEVICES <<< "$TARGET"
+    declare -A SEEN=()
+    for DEVICE in "${DEVICES[@]}"; do
+        if [[ -v SEEN[$DEVICE] ]]; then
+            echo "STOP: duplicate PCI target: $DEVICE" >&2
+            exit 1
+        fi
+        SEEN[$DEVICE]=1
+        DEVICE_PATH="/sys/bus/pci/devices/$DEVICE"
+        test -d "$DEVICE_PATH"
+        test "$(cat "$DEVICE_PATH/vendor")" = 0x10de
+        CLASS=$(cat "$DEVICE_PATH/class")
+        [[ "$CLASS" == 0x03* ]]
+    done
+fi
 test -s "$PAYLOAD/gpu_unlock.ko"
 test -d "$PAYLOAD/firmware/gpu-unlock/610.43.03"
 (cd "$PAYLOAD" && sha256sum -c SHA256SUMS)

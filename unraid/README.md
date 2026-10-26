@@ -84,7 +84,10 @@ lspci -Dnn | grep -i nvidia
 
 Use the full four-digit-domain PCI address, e.g. `0000:01:00.0`, not the GPU
 index or nvidia-smi's eight-digit domain. Do not copy the example blindly.
-The installer accepts one target. Verify it is a supported upstream Ampere GPU.
+The installer accepts one PCI address, `all`, or a comma-separated list
+of PCI addresses. Verify that selected GPUs are supported by the upstream
+unlock module. For `all`, the hook checks NVIDIA display controllers for
+driver ownership before loading the module, excluding audio functions.
 
 ## 3. Stage the persistent hook
 
@@ -101,11 +104,24 @@ module compatibility string. It refuses another NVIDIA `install` hook or a
 different configured target. It stages files only on the boot device and does
 not modify the current `/etc/modprobe.d` or execute the unlock now.
 
+For multiple GPUs, install with `all` or an explicit PCI list:
+
+    bash unraid/install.sh /absolute/payload-directory all
+    bash unraid/install.sh /absolute/payload-directory 0000:81:00.0,0000:82:00.0
+
+The installer rejects duplicate PCI addresses and validates explicit
+targets as NVIDIA display controllers. With `all`, device checks happen
+at boot.
+
 In Main -> Flash -> Syslinux Configuration, add a custom parameter:
 
 ```text
 gpu_unlock.targets=0000:01:00.0
 ```
+
+For multiple GPUs, use `gpu_unlock.targets=all` or the exact
+comma-separated PCI list supplied to the installer. The boot parameter
+must match the configured target exactly.
 
 Apply it to the normal Unraid OS entry, preserving existing options. Leave a
 recovery entry unchanged. If either disable marker described below exists,
